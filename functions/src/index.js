@@ -1,3 +1,5 @@
+// PATH: functions/src/index.js
+
 const admin = require("firebase-admin");
 admin.initializeApp();
 
@@ -27,9 +29,14 @@ const { completeTripAndOpenRatingWindow } = require("./lifecycle/completeTrip");
 // --- Ratings ---
 const { submitRating } = require("./ratings/submitRating");
 
+// --- Verification (NEW) ---
+const { submitDriverVerification } = require("./verification/submitDriverVerification");
+const { reviewDriverVerification } = require("./verification/reviewDriverVerification");
+
 // ============================================================
 // EXPORTS — Callable Functions
 // ============================================================
+
 exports.createTrip = createTrip;
 exports.updateTrip = updateTrip;
 exports.deleteTrip = deleteTrip;
@@ -40,13 +47,15 @@ exports.cancelBookingAndMaybeRefund = cancelBookingAndMaybeRefund;
 exports.createStripePaymentIntent = createStripePaymentIntent;
 exports.stripeWebhookHandler = stripeWebhookHandler;
 
-// ============================================================
-// EXPORTS — Scheduled Functions
-// ============================================================
-exports.expirePendingBookings = expirePendingBookings;
-exports.completeTripAndOpenRatingWindow = completeTripAndOpenRatingWindow;
+exports.submitRating = submitRating;
+
+// Verification (NEW)
+exports.submitDriverVerification = submitDriverVerification;
+exports.reviewDriverVerification = reviewDriverVerification;
 
 // ============================================================
-// EXPORTS — Callable (Rating)
+// EXPORTS — Scheduled / HTTP (as already used)
 // ============================================================
-exports.submitRating = submitRating;
+
+exports.expirePendingBookings = expirePendingBookings;
+exports.completeTripAndOpenRatingWindow = completeTripAndOpenRatingWindow;
