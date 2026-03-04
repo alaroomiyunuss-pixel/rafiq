@@ -1,20 +1,18 @@
 const { onRequest } = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
-
 const db = admin.firestore();
+
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 
 const stripeWebhookHandler = onRequest(
   { region: "me-central1", cors: false },
   async (req, res) => {
-    // --- Only POST ---
     if (req.method !== "POST") {
       res.status(405).send("Method Not Allowed");
       return;
     }
 
-    // --- Verify Stripe signature ---
     let event;
     try {
       const sig = req.headers["stripe-signature"];
@@ -25,31 +23,33 @@ const stripeWebhookHandler = onRequest(
       return;
     }
 
-    // --- Idempotency: check if already processed ---
+    // Idempotency
     const eventRef = db.collection("_stripeEvents").doc(event.id);
     const eventSnap = await eventRef.get();
     if (eventSnap.exists) {
-      console.log(`Event ${event.id} already processed, skipping.`);
       res.status(200).json({ received: true, duplicate: true });
       return;
     }
 
-    // --- Handle event types ---
     try {
       switch (event.type) {
         case "payment_intent.succeeded":
-          await handlePaymentSuccess(event.data.object, event.id);
+          await handlePaymentSuccess(event.data.object);
+          break;
+
+        // Optional: if you later use refunds webhooks
+        case "charge.refunded":
+          await handleChargeRefunded(event.data.object);
           break;
 
         case "payment_intent.payment_failed":
-          await handlePaymentFailed(event.data.object, event.id);
+          await handlePaymentFailed(event.data.object);
           break;
 
         default:
           console.log(`Unhandled event type: ${event.type}`);
       }
 
-      // Mark event as processed
       await eventRef.set({
         type: event.type,
         processedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -66,75 +66,159 @@ const stripeWebhookHandler = onRequest(
 // ============================================================
 // payment_intent.succeeded
 // ============================================================
-async function handlePaymentSuccess(paymentIntent, eventId) {
-  const { bookingId, tripId, passengerId, driverId } = paymentIntent.metadata;
-
-  if (!bookingId) {
-    console.error("No bookingId in PaymentIntent metadata");
+async function handlePaymentSuccess(paymentIntent) {
+  const { bookingId, tripId, passengerId, driverId } = paymentIntent.metadata || {};
+  if (!bookingId || !tripId || !passengerId || !driverId) {
+    console.error("Missing metadata on PaymentIntent (bookingId/tripId/passengerId/driverId)");
     return;
   }
 
   const bookingRef = db.collection("bookings").doc(bookingId);
-  const bookingSnap = await bookingRef.get();
 
-  if (!bookingSnap.exists) {
-    console.error(`Booking ${bookingId} not found`);
-    return;
-  }
+  await db.runTransaction(async (tx) => {
+    const bookingSnap = await tx.get(bookingRef);
+    if (!bookingSnap.exists) throw new Error(`Booking ${bookingId} not found`);
 
-  const booking = bookingSnap.data();
+    const booking = bookingSnap.data();
 
-  // Idempotent: skip if already confirmed
-  if (booking.status === "confirmed" && booking.paymentStatus === "paid") {
-    console.log(`Booking ${bookingId} already confirmed, skipping.`);
-    return;
-  }
+    // Idempotent: already confirmed+paid
+    if (booking.status === "confirmed" && booking.paymentStatus === "paid") return;
 
-  // Update booking
-  await bookingRef.update({
-    status: "confirmed",
-    paymentStatus: "paid",
-    confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+    const total = Number(booking.totalAmountHalalas || 0);
+    const platformFee = Number(booking.platformFeeHalalas || 0);
+    const driverNet = Math.max(total - platformFee, 0);
+
+    // Update booking (electronic)
+    tx.update(bookingRef, {
+      status: "confirmed",
+      paymentStatus: "paid",
+      paymentMethod: "stripe",
+      confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+      driverNetHalalas: driverNet, // NEW (denormalized)
+    });
+
+    // Wallet doc (under user)
+    const walletRef = db.collection("users").doc(driverId).collection("finance").doc("wallet");
+    const walletSnap = await tx.get(walletRef);
+    if (!walletSnap.exists) {
+      tx.set(walletRef, {
+        currency: "SAR",
+        availableBalanceHalalas: 0,
+        pendingBalanceHalalas: driverNet,
+        lifetimeEarnedHalalas: 0,
+        lifetimeWithdrawnHalalas: 0,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } else {
+      tx.update(walletRef, {
+        pendingBalanceHalalas: admin.firestore.FieldValue.increment(driverNet),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+
+    // Ledger entry (pending)
+    const entryRef = db.collection("users").doc(driverId).collection("financeLedger").doc();
+    tx.set(entryRef, {
+      type: "earning_pending", // pending until trip completion
+      bookingId,
+      tripId,
+      passengerId,
+      driverId,
+      amountHalalas: driverNet,
+      currency: "SAR",
+      status: "pending",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
   });
 
-  // Create conversation for chat
+  // Create conversation + push after transaction
   await createConversation(bookingId, tripId, passengerId, driverId);
-
-  // Send push notifications
   await sendBookingConfirmedPush(passengerId, driverId, tripId);
+}
+
+// ============================================================
+// charge.refunded (basic reversal)
+// ============================================================
+async function handleChargeRefunded(charge) {
+  // charge.payment_intent could be string id
+  const paymentIntentId = charge.payment_intent;
+  if (!paymentIntentId) return;
+
+  // We rely on metadata stored on PI:
+  const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
+  const { bookingId, tripId, passengerId, driverId } = pi.metadata || {};
+  if (!bookingId || !driverId) return;
+
+  const bookingRef = db.collection("bookings").doc(bookingId);
+
+  await db.runTransaction(async (tx) => {
+    const bookingSnap = await tx.get(bookingRef);
+    if (!bookingSnap.exists) return;
+    const booking = bookingSnap.data();
+
+    // Idempotent
+    if (booking.paymentStatus === "refunded") return;
+
+    const driverNet = Number(booking.driverNetHalalas || 0);
+
+    tx.update(bookingRef, {
+      paymentStatus: "refunded",
+      refundedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // Try remove from pending first; if not enough, remove from available.
+    const walletRef = db.collection("users").doc(driverId).collection("finance").doc("wallet");
+    const walletSnap = await tx.get(walletRef);
+    if (!walletSnap.exists) return;
+
+    const w = walletSnap.data();
+    const pending = Number(w.pendingBalanceHalalas || 0);
+    const takeFromPending = Math.min(pending, driverNet);
+    const remaining = driverNet - takeFromPending;
+
+    const updates = {
+      pendingBalanceHalalas: admin.firestore.FieldValue.increment(-takeFromPending),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (remaining > 0) {
+      updates.availableBalanceHalalas = admin.firestore.FieldValue.increment(-remaining);
+    }
+
+    tx.update(walletRef, updates);
+
+    const entryRef = db.collection("users").doc(driverId).collection("financeLedger").doc();
+    tx.set(entryRef, {
+      type: "refund_reversal",
+      bookingId,
+      tripId: tripId || booking.tripId,
+      passengerId: passengerId || booking.passengerId,
+      driverId,
+      amountHalalas: driverNet,
+      currency: "SAR",
+      status: "posted",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  });
 }
 
 // ============================================================
 // payment_intent.payment_failed
 // ============================================================
-async function handlePaymentFailed(paymentIntent, eventId) {
-  const { bookingId } = paymentIntent.metadata;
-
-  if (!bookingId) {
-    console.error("No bookingId in PaymentIntent metadata");
-    return;
-  }
+async function handlePaymentFailed(paymentIntent) {
+  const { bookingId } = paymentIntent.metadata || {};
+  if (!bookingId) return;
 
   const bookingRef = db.collection("bookings").doc(bookingId);
   const bookingSnap = await bookingRef.get();
-
-  if (!bookingSnap.exists) {
-    console.error(`Booking ${bookingId} not found`);
-    return;
-  }
+  if (!bookingSnap.exists) return;
 
   const booking = bookingSnap.data();
+  if (booking.paymentStatus === "failed") return;
 
-  // Idempotent: skip if already failed
-  if (booking.paymentStatus === "failed") {
-    return;
-  }
+  await bookingRef.update({ paymentStatus: "failed" });
 
-  await bookingRef.update({
-    paymentStatus: "failed",
-  });
-
-  // Notify passenger of failure
   await sendPushToUser(booking.passengerId, {
     title: "فشل الدفع",
     body: "لم يتم الدفع. حاول مرة أخرى قبل انتهاء المهلة",
@@ -146,16 +230,13 @@ async function handlePaymentFailed(paymentIntent, eventId) {
 // Create conversation on confirmed booking
 // ============================================================
 async function createConversation(bookingId, tripId, passengerId, driverId) {
-  // Check if conversation already exists for this booking
   const existing = await db
     .collection("conversations")
     .where("bookingId", "==", bookingId)
     .limit(1)
     .get();
 
-  if (!existing.empty) {
-    return; // Already created
-  }
+  if (!existing.empty) return;
 
   await db.collection("conversations").add({
     bookingId,
@@ -169,26 +250,21 @@ async function createConversation(bookingId, tripId, passengerId, driverId) {
 }
 
 // ============================================================
-// Push: booking confirmed to both parties
+// Push: booking confirmed
 // ============================================================
 async function sendBookingConfirmedPush(passengerId, driverId, tripId) {
-  // Load trip for context
   const tripSnap = await db.collection("trips").doc(tripId).get();
   const trip = tripSnap.exists ? tripSnap.data() : null;
-  const routeText = trip
-    ? `${trip.originNameAr} → ${trip.destNameAr}`
-    : "رحلة";
+  const routeText = trip ? `${trip.originNameAr} → ${trip.destNameAr}` : "رحلة";
 
-  // Notify passenger
   await sendPushToUser(passengerId, {
     title: "تم تأكيد الحجز ✅",
     body: `تم تأكيد حجزك في رحلة ${routeText}`,
     data: { type: "booking_confirmed", tripId },
   });
 
-  // Notify driver
   await sendPushToUser(driverId, {
-    title: "حجز جديد 🎉",
+    title: "حجز جديد",
     body: `لديك حجز جديد مؤكد في رحلة ${routeText}`,
     data: { type: "booking_confirmed", tripId },
   });
@@ -207,27 +283,15 @@ async function sendPushToUser(uid, notification) {
   try {
     await admin.messaging().send({
       token: fcmToken,
-      notification: {
-        title: notification.title,
-        body: notification.body,
-      },
+      notification: { title: notification.title, body: notification.body },
       data: notification.data || {},
-      apns: {
-        payload: {
-          aps: {
-            sound: "default",
-            badge: 1,
-          },
-        },
-      },
+      apns: { payload: { aps: { sound: "default", badge: 1 } } },
     });
   } catch (err) {
-    // Token might be stale, log and continue
     if (
       err.code === "messaging/registration-token-not-registered" ||
       err.code === "messaging/invalid-registration-token"
     ) {
-      console.warn(`Stale FCM token for user ${uid}, clearing.`);
       await db.collection("users").doc(uid).update({ fcmToken: null });
     } else {
       console.error(`FCM send failed for ${uid}:`, err.message);
