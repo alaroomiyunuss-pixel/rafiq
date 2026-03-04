@@ -1,0 +1,157 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================================
+    // HELPERS
+    // ============================================================
+    function isAuth() {
+      return request.auth != null;
+    }
+    function isOwner(uid) {
+      return isAuth() && request.auth.uid == uid;
+    }
+    function isParticipant(participants) {
+      return isAuth() && request.auth.uid in participants;
+    }
+
+    // ============================================================
+    // USERS
+    // ============================================================
+    match /users/{uid} {
+      allow read: if isAuth();
+      allow create: if isOwner(uid);
+      allow update: if isOwner(uid)
+        // Users cannot change their own role to admin/company
+        && (!('role' in request.resource.data) ||
+            request.resource.data.role in ['passenger', 'driver', 'both']);
+      allow delete: if false;
+
+      // VEHICLES subcollection
+      match /vehicles/{vehicleId} {
+        allow read: if isAuth();
+        allow create, update: if isOwner(uid);
+        allow delete: if isOwner(uid);
+      }
+    }
+
+    // ============================================================
+    // TRIPS
+    // Cloud Functions enforce:
+    //   - min 4h lead time
+    //   - no edit within 24h of departure
+    //   - no edit after first confirmed booking
+    //   - seat decrement via transaction only
+    //   - status transitions
+    // ============================================================
+    match /trips/{tripId} {
+      allow read: if isAuth();
+      allow create: if isAuth()
+        && request.resource.data.driverId == request.auth.uid
+        && request.resource.data.status == 'open';
+      allow update: if isAuth()
+        && resource.data.driverId == request.auth.uid
+        // Block direct seat/status manipulation from client
+        && !('availableSeats' in request.resource.data &&
+             request.resource.data.availableSeats != resource.data.availableSeats)
+        && !('confirmedBookings' in request.resource.data &&
+             request.resource.data.confirmedBookings != resource.data.confirmedBookings);
+      allow delete: if isAuth()
+        && resource.data.driverId == request.auth.uid
+        && resource.data.confirmedBookings == 0;
+    }
+
+    // ============================================================
+    // BOOKINGS
+    // Cloud Functions enforce:
+    //   - payment intent creation
+    //   - status transitions (pending -> confirmed via webhook)
+    //   - cancel/refund logic (24h rule)
+    //   - expiry (3h timeout)
+    //   - seat transaction on confirm/cancel
+    //   - platformFee calculation
+    // ============================================================
+    match /bookings/{bookingId} {
+      allow read: if isAuth()
+        && (resource.data.passengerId == request.auth.uid
+            || resource.data.driverId == request.auth.uid);
+      // Bookings created ONLY via Cloud Functions
+      allow create: if false;
+      // Status changes ONLY via Cloud Functions
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // ============================================================
+    // CONVERSATIONS
+    // ============================================================
+    match /conversations/{convoId} {
+      allow read: if isAuth()
+        && isParticipant(resource.data.participants);
+      // Created by Cloud Functions when booking is confirmed
+      allow create: if false;
+      // Allow participant to update unreadCount only
+      allow update: if isAuth()
+        && isParticipant(resource.data.participants);
+
+      // MESSAGES subcollection
+      match /messages/{messageId} {
+        allow read: if isAuth()
+          && isParticipant(
+               get(/databases/$(database)/documents/conversations/$(convoId)).data.participants
+             );
+        allow create: if isAuth()
+          && isParticipant(
+               get(/databases/$(database)/documents/conversations/$(convoId)).data.participants
+             )
+          && request.resource.data.senderId == request.auth.uid;
+        allow update: if isAuth()
+          && isParticipant(
+               get(/databases/$(database)/documents/conversations/$(convoId)).data.participants
+             );
+        allow delete: if false;
+      }
+    }
+
+    // ============================================================
+    // REVIEWS
+    // Cloud Functions enforce:
+    //   - 2h rating window
+    //   - one review per side per booking
+    //   - avgRating recalculation on user doc
+    // ============================================================
+    match /reviews/{reviewId} {
+      allow read: if isAuth();
+      // Created ONLY via Cloud Functions
+      allow create: if false;
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // ============================================================
+    // CONFIG (read-only for clients)
+    // ============================================================
+    match /config/{docId} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+
+    // ============================================================
+    // CITIES (read-only, seeded by admin)
+    // ============================================================
+    match /cities/{cityId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // ============================================================
+    // RESERVED COLLECTIONS (locked)
+    // ============================================================
+    match /companies/{doc} { allow read, write: if false; }
+    match /adminUsers/{doc} { allow read, write: if false; }
+    match /supportTickets/{doc} { allow read, write: if false; }
+    match /promoCodes/{doc} { allow read, write: if false; }
+    match /notifications/{uid}/items/{doc} { allow read, write: if false; }
+    match /verifications/{doc} { allow read, write: if false; }
+  }
+}

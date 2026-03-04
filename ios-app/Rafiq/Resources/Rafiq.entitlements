@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  PATH: ios-app/Rafiq/Resources/
+  FILENAME: Rafiq.entitlements
+-->
+<plist version="1.0">
+<dict>
+    <!-- Push Notifications -->
+    <key>aps-environment</key>
+    <string>development</string>
+    <!-- Change to "production" for App Store release -->
+
+    <!-- Apple Pay -->
+    <key>com.apple.developer.in-app-payments</key>
+    <array>
+        <string>merchant.com.rafiq.app</string>
+    </array>
+
+    <!-- Associated Domains (RESERVED: deep linking / universal links) -->
+    <!--
+    <key>com.apple.developer.associated-domains</key>
+    <array>
+        <string>applinks:rafiq.app</string>
+    </array>
+    -->
+
+    <!-- Keychain Sharing (Firebase Auth token persistence) -->
+    <key>keychain-access-groups</key>
+    <array>
+        <string>$(AppIdentifierPrefix)com.rafiq.app</string>
+    </array>
+</dict>
+</plist>

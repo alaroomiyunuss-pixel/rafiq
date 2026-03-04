@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  PATH: ios-app/Rafiq/Resources/
+  FILENAME: Info.plist
+-->
+<plist version="1.0">
+<dict>
+    <!-- Bundle Config -->
+    <key>CFBundleDevelopmentRegion</key>
+    <string>ar</string>
+    <key>CFBundleDisplayName</key>
+    <string>رفيق</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <key>UILaunchStoryboardName</key>
+    <string>LaunchScreen</string>
+
+    <!-- Supported Orientations -->
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+    </array>
+
+    <!-- RTL Support -->
+    <key>UISemanticContentAttribute</key>
+    <string>forceRightToLeft</string>
+
+    <!-- Background Modes -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>remote-notification</string>
+    </array>
+
+    <!-- ============================================ -->
+    <!-- PERMISSIONS — Arabic Strings                 -->
+    <!-- ============================================ -->
+
+    <!-- Location: When In Use (meeting point selection) -->
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>نحتاج الوصول لموقعك لتحديد نقطة التجمع أو الالتقاء على الخريطة</string>
+
+    <!-- Location: Always (RESERVED for live tracking post-MVP) -->
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>نحتاج الوصول لموقعك لتتبع الرحلة وتحديد نقطة الالتقاء</string>
+
+    <!-- Camera (profile photo + vehicle photo) -->
+    <key>NSCameraUsageDescription</key>
+    <string>نحتاج الكاميرا لالتقاط صورة الملف الشخصي أو صورة المركبة</string>
+
+    <!-- Photo Library (profile photo + vehicle photo) -->
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>نحتاج الوصول لمكتبة الصور لاختيار صورة الملف الشخصي أو صورة المركبة</string>
+
+    <!-- Microphone (RESERVED for future voice messages) -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>نحتاج المايكروفون لتسجيل رسائل صوتية في المحادثة</string>
+
+    <!-- Contacts (RESERVED for invite friends) -->
+    <key>NSContactsUsageDescription</key>
+    <string>نحتاج الوصول لجهات الاتصال لدعوة أصدقائك لتطبيق رفيق</string>
+
+    <!-- ============================================ -->
+    <!-- URL Schemes                                  -->
+    <!-- ============================================ -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <!-- Stripe Return URL -->
+        <dict>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>rafiq-stripe</string>
+            </array>
+            <key>CFBundleURLName</key>
+            <string>com.rafiq.stripe</string>
+        </dict>
+    </array>
+
+    <!-- ============================================ -->
+    <!-- App Transport Security                       -->
+    <!-- ============================================ -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <false/>
+    </dict>
+</dict>
+</plist>

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  PATH: ios-app/Rafiq/Resources/
+  FILENAME: Keys.plist
+
+  ⚠️ DO NOT COMMIT THIS FILE TO GIT
+  Add to .gitignore: ios-app/Rafiq/Resources/Keys.plist
+  Copy Keys.plist.example and fill in real values.
+-->
+<plist version="1.0">
+<dict>
+    <!-- Google Maps SDK API Key -->
+    <key>GOOGLE_MAPS_API_KEY</key>
+    <string>YOUR_GOOGLE_MAPS_API_KEY_HERE</string>
+
+    <!-- Stripe Publishable Key -->
+    <key>STRIPE_PUBLISHABLE_KEY</key>
+    <string>pk_test_YOUR_STRIPE_PUBLISHABLE_KEY_HERE</string>
+
+    <!-- Stripe Merchant ID (Apple Pay) -->
+    <key>STRIPE_MERCHANT_ID</key>
+    <string>merchant.com.rafiq.app</string>
+
+    <!-- WhatsApp Support Numbers -->
+    <key>WHATSAPP_SUPPORT_SA</key>
+    <string>+966XXXXXXXXX</string>
+
+    <key>WHATSAPP_SUPPORT_YE</key>
+    <string>+967XXXXXXXXX</string>
+</dict>
+</plist>
